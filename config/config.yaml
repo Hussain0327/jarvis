@@ -1,0 +1,40 @@
+app:
+  name: jarvis
+  version: "0.1.0"
+  debug: false
+  log_level: INFO
+
+database:
+  host: localhost
+  port: 5432
+  name: jarvis
+  user: jarvis
+  password: jarvis_dev
+  pool_size: 20
+  echo: false
+
+perception:
+  vehicle_detector:
+    model_path: models/vehicle_detector/best.pt
+    confidence_threshold: 0.5
+    device: auto  # auto, cpu, cuda
+  plate_detector:
+    model_path: models/plate_detector/best.pt
+    confidence_threshold: 0.6
+    device: auto
+  plate_ocr:
+    model_name: microsoft/trocr-base-printed
+    confidence_threshold: 0.7
+    device: auto
+
+tracking:
+  algorithm: botsort  # botsort or bytetrack
+  max_age: 30  # frames before track deletion
+  min_hits: 3  # frames before track confirmation
+  iou_threshold: 0.3
+
+ingestion:
+  default_fps: 5
+  frame_buffer_size: 100
+  reconnect_max_retries: 10
+  reconnect_backoff_base: 2.0

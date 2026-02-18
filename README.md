@@ -45,7 +45,7 @@ Traffic Camera Feeds (RTSP/MJPEG)
         |
    [TrOCR Plate Recognition] ------> Plate Read Logs (PostgreSQL)
         |
-   [DeepSORT/ByteTrack Tracking] --> Track Logs (PostgreSQL)
+   [BoT-SORT/ByteTrack Tracking] ---> Track Logs (PostgreSQL)
         |
    [DINOv2 Cross-Camera Re-ID] ----> Identity Graph (PostgreSQL)
         |
@@ -65,14 +65,13 @@ Traffic Camera Feeds (RTSP/MJPEG)
 | Component | Technology | Purpose |
 |---|---|---|
 | Language | Python 3.11+ | Primary development language |
-| Deep Learning Framework | PyTorch 2.x | YOLOv8, DeepSORT, LSTM, DINOv2 |
-| Deep Learning Framework | TensorFlow 2.x | TrOCR plate OCR model |
+| Deep Learning Framework | PyTorch 2.x | YOLOv8, TrOCR, tracking, LSTM, DINOv2 |
 | Classical ML | scikit-learn | Clustering, anomaly detection, baselines |
 | Computer Vision | OpenCV | Frame extraction, preprocessing, stream handling |
 | Object Detection | Ultralytics YOLOv8 | Vehicle and plate detection |
 | OCR | TrOCR (microsoft/trocr-base-printed) | License plate character recognition |
-| Tracking | DeepSORT / ByteTrack | Multi-object tracking |
-| Re-identification | DINOv2 (facebook/dinov2-base) | Cross-camera vehicle embedding matching |
+| Tracking | BoT-SORT / ByteTrack (via BoxMOT) | Multi-object tracking |
+| Re-identification | OSNet (via BoxMOT) / DINOv2 (facebook/dinov2-base) | Cross-camera vehicle embedding matching |
 | Sequence Modeling | PyTorch LSTM or Transformer | Trajectory prediction |
 | LLM | Qwen3-30B-A3B (Apache 2.0) | Natural language analyst interface |
 | LLM Serving | Ollama (local) / vLLM (cloud) | Model inference |
@@ -99,8 +98,16 @@ Traffic Camera Feeds (RTSP/MJPEG)
 - Content: 100+ hours of traffic video from Beijing and Tianjin
 - Annotations: Bounding boxes for vehicles with classification (car, bus, van, others)
 - Size: ~140,000 frames, 1.21 million labeled objects
-- Use: Primary training dataset for YOLOv8 vehicle detection
+- Use: Supplementary training volume for YOLOv8 vehicle detection
 - Format: PASCAL VOC XML annotations
+- **Note:** Recorded in China — vehicle types, lane behavior, and road markings differ significantly from US traffic. Use as supplementary data, not primary.
+
+**CityFlow**
+- Source: https://www.aicitychallenge.org/
+- Content: US intersection footage from multiple cities, designed for traffic analysis
+- Annotations: Vehicle bounding boxes, tracking IDs, re-ID labels across cameras
+- Use: Primary training and evaluation dataset for US traffic scenarios (detection + tracking + re-ID)
+- Advantage: Matches target deployment domain (US intersections with US vehicle types)
 
 **BDD100K**
 - Source: https://bdd-data.berkeley.edu/
@@ -143,7 +150,7 @@ Traffic Camera Feeds (RTSP/MJPEG)
 
 **Synthetic Plate Data (self-generated)**
 - Method: Programmatically generate synthetic US license plate images with known text
-- Libraries: PIL/Pillow, imgaug for augmentation
+- Libraries: PIL/Pillow, albumentations for augmentation
 - Augmentations: rotation, blur, noise, lighting variation, perspective warping
 - Volume: Generate 50,000-100,000 synthetic plate crops
 - Use: Augment real plate data for TrOCR fine-tuning
@@ -154,7 +161,12 @@ Traffic Camera Feeds (RTSP/MJPEG)
 - Source: https://vehiclereid.github.io/VeRi/
 - Content: 776 vehicles captured by 20 cameras
 - Annotations: Vehicle identity labels across cameras
-- Use: Evaluating DINOv2 embedding quality for cross-camera matching
+- Use: Evaluating DINOv2/OSNet embedding quality for cross-camera matching
+
+**CityFlow (Re-ID subset)**
+- Source: https://www.aicitychallenge.org/
+- Content: US intersection footage with vehicle re-ID annotations across cameras
+- Use: Evaluating re-ID performance on US traffic (complementary to VeRi-776)
 
 **VehicleID**
 - Source: https://www.pkuml.org/resources/pku-vehicleid.html
@@ -167,7 +179,8 @@ Traffic Camera Feeds (RTSP/MJPEG)
 - Source: https://ops.fhwa.dot.gov/trafficanalysistools/ngsim.htm
 - Content: Detailed vehicle trajectory data from US highways
 - Annotations: Position, velocity, acceleration at 10 Hz
-- Use: Training LSTM/Transformer trajectory prediction model
+- Use: Supplementary training data for LSTM/Transformer trajectory prediction model
+- **Note:** Collected in 2005-2006 — traffic patterns and vehicle types have changed significantly. Prioritize Argoverse 2 as primary trajectory training data.
 
 **Argoverse 2 Motion Forecasting**
 - Source: https://www.argoverse.org/av2.html
@@ -206,14 +219,14 @@ Traffic Camera Feeds (RTSP/MJPEG)
 
 **Tasks:**
 - Set up Python 3.11 virtual environment
-- Install core dependencies: PyTorch, TensorFlow, OpenCV, Ultralytics, transformers
+- Install core dependencies: PyTorch, OpenCV, Ultralytics, transformers
 - Configure Google Colab Pro notebook for GPU training
 - Initialize Git repository with proper .gitignore
 - Create project directory structure
 
 **Directory Structure:**
 ```
-project-sentinel/
+project-jarvis/
 ├── config/
 │   ├── config.yaml              # Global configuration
 │   ├── camera_registry.yaml     # Camera metadata (location, URL, FOV)
@@ -227,7 +240,7 @@ project-sentinel/
 │   ├── vehicle_detector/        # YOLOv8 vehicle detection
 │   ├── plate_detector/          # YOLOv8 plate detection
 │   ├── plate_ocr/               # TrOCR plate reading
-│   ├── tracker/                 # DeepSORT/ByteTrack weights
+│   ├── tracker/                 # BoT-SORT/ByteTrack weights
 │   ├── reid/                    # DINOv2 re-ID embeddings
 │   ├── trajectory/              # LSTM/Transformer prediction
 │   └── llm/                     # Fine-tuned Qwen3 adapter weights
@@ -242,7 +255,7 @@ project-sentinel/
 │   │   ├── plate_ocr.py         # TrOCR OCR pipeline
 │   │   └── perception_pipeline.py  # End-to-end frame processing
 │   ├── tracking/
-│   │   ├── single_camera.py     # DeepSORT/ByteTrack per-camera tracking
+│   │   ├── single_camera.py     # BoT-SORT/ByteTrack per-camera tracking
 │   │   ├── reid_embedder.py     # DINOv2 embedding extraction
 │   │   ├── cross_camera.py      # Cross-camera identity resolution
 │   │   └── identity_graph.py    # Vehicle identity management
@@ -310,21 +323,19 @@ pandas>=2.0
 # Deep Learning
 torch>=2.1
 torchvision>=0.16
-tensorflow>=2.15
 ultralytics>=8.1
 transformers>=4.51
 
 # Computer Vision
 opencv-python>=4.8
 Pillow>=10.0
-imgaug>=0.4
+albumentations>=1.3
 
 # Classical ML
 scikit-learn>=1.3
-xgboost>=2.0
 
 # Tracking
-deep-sort-realtime>=1.3
+boxmot>=11.0
 
 # Embeddings and LLM
 sentence-transformers>=2.2
@@ -487,33 +498,36 @@ Output: {vehicle_bbox, vehicle_class, confidence,
 
 #### 2.1 Single-Camera Multi-Object Tracking (Week 5)
 
-**Algorithm: DeepSORT**
-- Library: deep-sort-realtime (Python package)
-- Components:
-  - Kalman Filter: predicts vehicle position in next frame based on motion model
-  - Hungarian Algorithm: associates detections to existing tracks using cost matrix
-  - Deep Appearance Descriptor: CNN embedding to distinguish visually similar vehicles
+**Algorithm: BoT-SORT (primary) / ByteTrack (fast alternative)**
+- Library: BoxMOT (`pip install boxmot`) — actively maintained, pluggable tracker interface
+- Why not DeepSORT: DeepSORT (2017) has high ID switch rates and slow ReID bottleneck. BoT-SORT achieves state-of-the-art MOTA on MOT benchmarks with fewer ID switches. ByteTrack achieves 171 FPS with competitive accuracy.
+- Components (BoT-SORT):
+  - Kalman Filter with camera motion compensation (CMC)
+  - IoU + appearance cost matrix for association
+  - Built-in re-ID model support (OSNet, CLIP) via BoxMOT
 
 **Implementation:**
-1. Initialize DeepSORT tracker per camera feed
+1. Initialize BoT-SORT tracker per camera feed via BoxMOT's pluggable interface
 2. Feed YOLOv8 detections (bounding boxes + confidence) into tracker each frame
 3. Tracker assigns persistent track IDs to each vehicle
 4. Track lifecycle: tentative (first 3 frames) -> confirmed -> deleted (30 frames without match)
 5. For each confirmed track, log to database: track_id, camera_id, frame_number, timestamp, bbox, vehicle_class, plate_text (if available)
+6. If BoT-SORT latency is too high for a given feed, fall back to ByteTrack (same BoxMOT interface)
 
 **Evaluation:**
 - Metrics: MOTA (Multi-Object Tracking Accuracy), MOTP (Precision), IDF1 (identity preservation)
 - Test on UA-DETRAC test set with ground truth track IDs
-- Target: MOTA >= 0.70, IDF1 >= 0.65
+- Target: MOTA >= 0.75, IDF1 >= 0.70
 
 **Deliverable:** Working `single_camera.py` that maintains vehicle identity across frames
 
 #### 2.2 Vehicle Re-identification Embeddings (Week 6)
 
-**Model: DINOv2 (facebook/dinov2-base)**
-- Pre-trained self-supervised vision transformer from Hugging Face
-- Generates 768-dimensional embedding for any image crop
-- No fine-tuning required initially; evaluate zero-shot performance first
+**Primary Model: OSNet (via BoxMOT) / DINOv2 (facebook/dinov2-base)**
+- OSNet: lightweight, purpose-built re-ID backbone used in StrongSORT; included in BoxMOT ecosystem
+- DINOv2: pre-trained self-supervised vision transformer, generates 768-dim embeddings
+- Strategy: Start with BoxMOT's built-in OSNet re-ID (optimized for tracking). Evaluate DINOv2 zero-shot as alternative if OSNet underperforms on vehicle crops.
+- BoxMOT also includes CLIP-based re-ID models fine-tuned on vehicle data
 
 **Implementation:**
 1. For each tracked vehicle, extract the best crop (highest resolution, least occlusion) per track
@@ -526,7 +540,7 @@ Output: {vehicle_bbox, vehicle_class, confidence,
 - If zero-shot DINOv2 achieves Rank-1 >= 70%, proceed without fine-tuning
 - If below threshold, fine-tune DINOv2 with contrastive loss on VeRi-776 training set
 
-**Alternative Model:** CLIP (openai/clip-vit-base-patch32) as backup if DINOv2 underperforms on vehicle crops
+**Alternative Models:** CLIP (openai/clip-vit-base-patch32) as backup; fine-tuned DINOv2 on VeRi-776 if zero-shot underperforms
 
 **Deliverable:** Working `reid_embedder.py` that generates embeddings for vehicle crops
 
@@ -710,8 +724,8 @@ CREATE INDEX idx_vehicles_plate ON vehicles(plate_number);
 CREATE INDEX idx_anomalies_vehicle ON anomalies(vehicle_id);
 CREATE INDEX idx_anomalies_type ON anomalies(anomaly_type);
 CREATE INDEX idx_predictions_vehicle ON predictions(vehicle_id);
-CREATE INDEX idx_sighting_embedding ON detections USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-CREATE INDEX idx_knowledge_embedding ON knowledge_base USING ivfflat (embedding vector_cosine_ops) WITH (lists = 20);
+CREATE INDEX idx_sighting_embedding ON detections USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_knowledge_embedding ON knowledge_base USING hnsw (embedding vector_cosine_ops);
 ```
 
 #### 3.2 Data Pipeline
@@ -911,7 +925,7 @@ POST /api/query                      # Natural language query (LLM layer)
 **Model: Qwen3-30B-A3B**
 - Architecture: Mixture of Experts, 30B total params, 3B activated per token
 - License: Apache 2.0 (free for all use)
-- Source: Hugging Face (Qwen/Qwen3-30B-A3B-Instruct)
+- Source: Hugging Face (Qwen/Qwen3-30B-A3B-Instruct-2507)
 
 **Local Development (Ollama):**
 ```bash
@@ -925,7 +939,7 @@ ollama run qwen3:30b-a3b
 ```bash
 pip install vllm
 python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen3-30B-A3B-Instruct \
+    --model Qwen/Qwen3-30B-A3B-Instruct-2507 \
     --quantization awq \
     --max-model-len 8192
 ```
@@ -1067,18 +1081,21 @@ def cache_result(query_hash, result, ttl_seconds):
 # Static queries (route clusters, camera info): 3600 seconds
 ```
 
-**Level 2: Embedding Cache**
+**Level 2: Semantic Query Cache (pgvector)**
 ```python
 def get_similar_cached_query(query_embedding, threshold=0.95):
-    # Check if a very similar query was recently answered
-    cached_queries = cache.keys("embedding:*")
-    for key in cached_queries:
-        cached_emb = json.loads(cache.get(key))
-        similarity = cosine_similarity(query_embedding, cached_emb['embedding'])
-        if similarity >= threshold:
-            return cached_emb['response']
-    return None
+    # Use pgvector similarity search instead of brute-force iteration
+    # This scales to any number of cached queries via HNSW index
+    result = db.execute("""
+        SELECT response, 1 - (embedding <=> %s::vector) as similarity
+        FROM query_cache
+        WHERE 1 - (embedding <=> %s::vector) >= %s
+        ORDER BY embedding <=> %s::vector
+        LIMIT 1
+    """, [query_embedding, query_embedding, threshold, query_embedding])
+    return result[0]['response'] if result else None
 ```
+- **Note:** Previous design iterated over all cached queries in Redis with O(n) cosine similarity — this does not scale. Using pgvector with an HNSW index provides O(log n) approximate nearest neighbor search.
 
 #### 6.5 SQL Validation Layer (Week 15)
 
@@ -1178,6 +1195,8 @@ Relevant system context:
 - Manual review and correction of failed queries
 - Categorized training examples covering all function types
 
+**Bootstrapping Note:** Fine-tuning requires data from the live system running with the base (non-fine-tuned) model. The system must operate with the base Qwen3 model first to collect sufficient query-response pairs. Fine-tuning is therefore a Phase 7+ activity — the base model handles all queries during initial deployment, and fine-tuning improves accuracy iteratively as usage data accumulates.
+
 **Fine-Tuning Method: QLoRA**
 ```python
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -1194,7 +1213,7 @@ bnb_config = BitsAndBytesConfig(
 
 # Load model in 4-bit
 model = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen3-30B-A3B-Instruct",
+    "Qwen/Qwen3-30B-A3B-Instruct-2507",
     quantization_config=bnb_config,
     device_map="auto"
 )
@@ -1256,14 +1275,12 @@ model = get_peft_model(model, lora_config)
 #### 7.1 Docker Compose Architecture (Week 18)
 
 ```yaml
-version: '3.8'
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_DB: sentinel
-      POSTGRES_USER: sentinel
+      POSTGRES_DB: jarvis
+      POSTGRES_USER: jarvis
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5432:5432"
@@ -1280,7 +1297,7 @@ services:
     depends_on:
       - postgres
     environment:
-      - DATABASE_URL=postgresql://sentinel:${DB_PASSWORD}@postgres:5432/sentinel
+      - DATABASE_URL=postgresql://jarvis:${DB_PASSWORD}@postgres:5432/jarvis
     volumes:
       - ./models:/app/models
       - ./config:/app/config
@@ -1391,15 +1408,15 @@ volumes:
 Project Jarvis: Intelligent Traffic Intelligence Platform
 - Built end-to-end AI platform processing live traffic camera feeds for vehicle detection,
   tracking, and trajectory prediction across multi-camera networks
-- Trained YOLOv8 (PyTorch) for vehicle/plate detection, TrOCR (TensorFlow) for plate OCR,
+- Trained YOLOv8 (PyTorch) for vehicle/plate detection, TrOCR (PyTorch/Transformers) for plate OCR,
   LSTM for trajectory prediction; achieved 87% mAP vehicle detection, 92% plate read accuracy
-- Implemented cross-camera vehicle re-identification using DINOv2 embeddings with
-  DeepSORT multi-object tracking
+- Implemented cross-camera vehicle re-identification using DINOv2/OSNet embeddings with
+  BoT-SORT multi-object tracking via BoxMOT
 - Built analytics engine with scikit-learn (DBSCAN clustering, Isolation Forest anomaly
   detection) processing 10,000+ detections daily
 - Designed RAG-powered natural language interface using fine-tuned Qwen3-30B-A3B (QLoRA)
   with pgvector, Redis caching, and validated SQL generation
-- Full stack: PyTorch, TensorFlow, scikit-learn, PostgreSQL, pgvector, Redis, FastAPI,
+- Full stack: PyTorch, scikit-learn, PostgreSQL, pgvector, Redis, FastAPI,
   Docker, React/Streamlit
 ```
 
@@ -1414,7 +1431,7 @@ Project Jarvis: Intelligent Traffic Intelligence Platform
 | Vehicle Detection (YOLOv8) | mAP@0.5 | >= 0.85 | Per-class precision/recall, FPS |
 | Plate Detection (YOLOv8) | mAP@0.5 | >= 0.90 | Recall at various IoU thresholds |
 | Plate OCR (TrOCR) | Character Error Rate | <= 5% | Full-plate exact match >= 90% |
-| Tracking (DeepSORT) | MOTA | >= 0.70 | IDF1 >= 0.65, ID switches per 100 frames |
+| Tracking (BoT-SORT) | MOTA | >= 0.75 | IDF1 >= 0.70, ID switches per 100 frames |
 | Re-ID (DINOv2) | Rank-1 Accuracy | >= 0.70 | mAP on VeRi-776 |
 | Route Clustering (DBSCAN) | Silhouette Score | >= 0.40 | Cluster stability across time windows |
 | Anomaly Detection (IF) | Precision@k | >= 0.80 | False positive rate <= 10% |
@@ -1474,7 +1491,7 @@ Project Jarvis: Intelligent Traffic Intelligence Platform
 | Plate OCR | TrOCR | microsoft/trocr-base-printed | ~334MB |
 | Vehicle Re-ID | DINOv2 | facebook/dinov2-base | ~346MB |
 | RAG Embeddings | MiniLM | sentence-transformers/all-MiniLM-L6-v2 | ~80MB |
-| LLM Analyst | Qwen3-30B-A3B | Qwen/Qwen3-30B-A3B-Instruct | ~16GB (4-bit) |
+| LLM Analyst | Qwen3-30B-A3B | Qwen/Qwen3-30B-A3B-Instruct-2507 | ~16GB (4-bit) |
 
 ---
 
@@ -1505,4 +1522,172 @@ Project Jarvis: Intelligent Traffic Intelligence Platform
 | Data Engineering | PostgreSQL, pgvector, Redis caching, batch/stream data pipelines |
 | Software Engineering | FastAPI, Docker, REST API design, system architecture, testing |
 | MLOps | Model training pipelines, evaluation frameworks, quantization, deployment |
-| Frameworks | PyTorch, TensorFlow, scikit-learn, Hugging Face, OpenCV, Ultralytics |
+| Frameworks | PyTorch, scikit-learn, Hugging Face, OpenCV, Ultralytics, BoxMOT |
+
+---
+
+## 11. Security and Privacy
+
+### 11.1 API Authentication
+
+All API endpoints require authentication. Strategy:
+- **JWT-based authentication** for all `/api/*` endpoints
+- API keys for service-to-service communication (ingestion, perception, tracking services)
+- Role-based access control: `admin` (full access), `analyst` (read + query), `viewer` (dashboard only)
+- Rate limiting on `/api/query` (LLM endpoint) to prevent abuse
+
+### 11.2 PII Handling and Data Privacy
+
+License plate numbers are personally identifiable information (PII). The system must address:
+
+**Data Retention:**
+- Raw detection data: retained for 90 days, then aggregated and anonymized
+- License plate numbers: hashed after retention period; only aggregate statistics preserved
+- Video frames/crops: retained for 7 days, then deleted (only metadata persists)
+
+**Access Controls:**
+- Plate number searches logged with user identity and justification
+- Embedding vectors stored without direct plate linkage where possible
+- Database-level row security policies restricting plate data access by role
+
+**Anonymization:**
+- Dashboard views default to anonymized mode (partial plate masking: `AB*-**34`)
+- Full plate numbers only visible to authenticated analysts
+- Export/API responses can be configured to mask PII
+
+**Legal Considerations:**
+- Compliance requirements vary by jurisdiction (DPPA in the US, GDPR if applicable)
+- System designed for authorized traffic management use cases only
+- Data processing agreements required for any third-party data sharing
+
+### 11.3 SQL Validation
+
+The keyword-blocking approach in Section 6.5 is a development placeholder. For production:
+- Use `sqlparse` to parse the query AST and validate structure
+- Block subqueries, CTEs, `UNION`, `INTO OUTFILE`, `LOAD_FILE()`, and `information_schema` access
+- Use parameterized query builders that construct queries from validated parameters rather than accepting raw SQL strings
+- All LLM-generated SQL is logged and auditable
+
+### 11.4 CORS Configuration
+
+FastAPI CORS middleware for React frontend:
+```python
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+---
+
+## 12. Error Handling and Monitoring
+
+### 12.1 Resilience Strategy
+
+**Camera Feed Failures:**
+- Automatic reconnection with exponential backoff (1s, 2s, 4s, ... up to 60s)
+- Mark camera as `degraded` after 3 failed reconnections, `offline` after 10
+- Continue processing other cameras; system degrades gracefully per-camera
+- Dashboard shows camera health status in real time
+
+**Model Inference Failures:**
+- Circuit breaker pattern: if a model fails 5 times in 60 seconds, stop sending requests for 30 seconds
+- Fallback: skip plate OCR if TrOCR fails (still log vehicle detection); skip re-ID if embedding model fails
+- All inference wrapped in try/except with structured error logging
+
+**Database Failures:**
+- Connection pool with retry logic (SQLAlchemy pool_pre_ping)
+- Write buffer: if DB is temporarily unreachable, buffer up to 1000 detection records in memory
+- Alert if buffer exceeds 80% capacity
+
+### 12.2 Health Check Endpoints
+
+```
+GET /health              # Overall system health (200 if core services up)
+GET /health/cameras      # Per-camera connection status
+GET /health/models       # Model loading and inference status
+GET /health/database     # PostgreSQL and Redis connectivity
+GET /health/llm          # Qwen3 model availability and response time
+```
+
+### 12.3 Monitoring and Observability
+
+**Structured Logging:**
+- All services use `loguru` with JSON output for machine-parseable logs
+- Log levels: DEBUG (inference details), INFO (detections, queries), WARNING (degraded services), ERROR (failures)
+- Correlation IDs trace a frame through the entire pipeline
+
+**Metrics (Prometheus):**
+- `jarvis_frames_processed_total` — counter per camera
+- `jarvis_detections_total` — counter by vehicle class
+- `jarvis_inference_duration_seconds` — histogram per model
+- `jarvis_tracking_id_switches_total` — counter per camera
+- `jarvis_llm_query_duration_seconds` — histogram
+- `jarvis_cache_hit_ratio` — gauge
+- `jarvis_camera_status` — gauge (1=active, 0=offline)
+
+**Dashboards (Grafana):**
+- System overview: cameras online, detections/sec, model latency
+- Per-camera detail: FPS, detection rate, tracking quality
+- LLM performance: query latency, cache hit rate, function call accuracy
+- Alerts: camera offline > 5 min, model latency > 2x baseline, error rate > 5%
+
+---
+
+## 13. GPU Memory Management
+
+### 13.1 Model Memory Budget
+
+| Model | VRAM (FP16) | Deployment |
+|---|---|---|
+| YOLOv8m (vehicle detection) | ~100MB | GPU (primary inference) |
+| YOLOv8s (plate detection) | ~50MB | GPU (shared with vehicle detector) |
+| TrOCR (plate OCR) | ~670MB | GPU |
+| DINOv2/OSNet (re-ID) | ~700MB | GPU |
+| LSTM (trajectory prediction) | ~50MB | CPU (low throughput, batch) |
+| Qwen3-30B-A3B (4-bit) | ~16GB | Separate process via Ollama |
+
+**Total GPU for perception pipeline:** ~1.5GB — fits comfortably on any modern GPU alongside Qwen3.
+
+### 13.2 Deployment Strategy
+
+- **Perception models** (YOLO, TrOCR, DINOv2/OSNet): loaded into a single GPU process, run concurrently
+- **Qwen3 LLM**: runs as a separate Ollama process with its own GPU memory allocation. On a single-GPU system, Ollama manages memory sharing. For production, deploy on a separate GPU or use vLLM on a cloud GPU.
+- **Analytics models** (scikit-learn, LSTM): run on CPU — lightweight and batch-oriented
+- **Model loading/unloading**: all models loaded at startup and kept resident. If GPU memory is constrained, TrOCR and DINOv2 can be offloaded to CPU with ~3x latency increase.
+
+---
+
+## 14. MVP Scope and Fallback Plan
+
+### 14.1 Minimum Viable Demo
+
+If the 20-week timeline slips, the following defines the minimum set of features for a working demo:
+
+**Core MVP (Phase 1 + Phase 3 + Phase 5):**
+- Vehicle detection and plate OCR on live camera feeds
+- All detections stored in PostgreSQL
+- Dashboard showing live feeds with detection overlays, vehicle search by plate, and basic analytics
+
+This alone demonstrates: deep learning (YOLO, TrOCR), computer vision, data engineering, and full-stack development.
+
+**Stretch Goal 1 (add Phase 2):** Multi-object tracking and cross-camera re-ID
+**Stretch Goal 2 (add Phase 4):** Analytics engine (clustering, anomaly detection, trajectory prediction)
+**Stretch Goal 3 (add Phase 6):** LLM intelligence interface with RAG
+
+### 14.2 Phase Dependencies
+
+```
+Phase 1 (Perception) ──> Phase 2 (Tracking) ──> Phase 4 (Analytics)
+       │                                              │
+       └──> Phase 3 (Database) ──> Phase 5 (Dashboard) ──> Phase 7 (Integration)
+                                        │
+                                        └──> Phase 6 (LLM Intelligence)
+```
+
+Each phase produces a standalone deliverable. If a phase takes longer than estimated, subsequent phases can begin with mock/simulated data from the incomplete phase.
