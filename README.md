@@ -11,7 +11,7 @@
 
 ## 1. Executive Summary
 
-Project Sentinel is a full-stack AI engineering and data science platform that ingests live traffic camera feeds, detects and identifies vehicles, tracks them across multiple cameras, predicts their trajectories, detects behavioral anomalies, and exposes all intelligence through both a visual command dashboard and a natural language analyst interface powered by a fine-tuned open-source LLM with RAG.
+Project Jarvis is a full-stack AI engineering and data science platform that ingests live traffic camera feeds, detects and identifies vehicles, tracks them across multiple cameras, predicts their trajectories, detects behavioral anomalies, and exposes all intelligence through both a visual command dashboard and a natural language analyst interface powered by a fine-tuned open-source LLM with RAG.
 
 The system chains together six distinct technical layers, each representing a different ML/AI engineering competency: real-time video ingestion, deep learning perception (detection + OCR), multi-object tracking with cross-camera identity resolution, classical ML analytics, a full-stack web dashboard, and an LLM-powered intelligence interface with retrieval-augmented generation.
 
@@ -1150,7 +1150,7 @@ User receives: "Plate ABC-1234 was spotted at 4 locations in the last 6 hours:
 
 **System Prompt for Base Model (pre-fine-tuning):**
 ```
-You are the intelligence analyst for Project Sentinel, a traffic monitoring system.
+You are the intelligence analyst for Project Jarvis, a traffic monitoring system.
 You have access to a database of vehicle detections, trajectories, and anomalies
 from a network of traffic cameras.
 
@@ -1388,7 +1388,7 @@ volumes:
 
 **Resume Description:**
 ```
-Project Sentinel: Intelligent Traffic Intelligence Platform
+Project Jarvis: Intelligent Traffic Intelligence Platform
 - Built end-to-end AI platform processing live traffic camera feeds for vehicle detection,
   tracking, and trajectory prediction across multi-camera networks
 - Trained YOLOv8 (PyTorch) for vehicle/plate detection, TrOCR (TensorFlow) for plate OCR,
