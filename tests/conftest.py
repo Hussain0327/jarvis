@@ -5,19 +5,64 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import numpy as np
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-from src.database.models import Base, Camera, Detection, Vehicle
+from src.base import BoundingBox, DetectionResult, FrameData
+
+# ---------------------------------------------------------------------------
+# Shared test helpers
+# ---------------------------------------------------------------------------
+
+
+def make_frame(camera_id: str = "cam-001", frame_number: int = 1) -> FrameData:
+    """Create a dummy FrameData for testing."""
+    return FrameData(
+        image=np.zeros((480, 640, 3), dtype=np.uint8),
+        camera_id=camera_id,
+        timestamp=datetime.now(UTC),
+        frame_number=frame_number,
+    )
+
+
+def make_detection(
+    x: float = 100,
+    y: float = 100,
+    w: float = 200,
+    h: float = 150,
+    vehicle_class: str = "car",
+    confidence: float = 0.9,
+    plate_text: str | None = None,
+) -> DetectionResult:
+    """Create a dummy DetectionResult for testing."""
+    return DetectionResult(
+        bbox=BoundingBox(x=x, y=y, w=w, h=h),
+        vehicle_class=vehicle_class,
+        vehicle_confidence=confidence,
+        plate_text=plate_text,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Database fixtures (integration tests)
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session")
 def db_engine():
     """Create a test database engine (requires running PostgreSQL)."""
     from src.config import get_settings
+    from src.database.models import Base
 
     settings = get_settings()
-    engine = create_engine(settings.database.url, echo=False)
+    url = settings.database.url
+    try:
+        engine = create_engine(url, echo=False)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        pytest.skip(f"PostgreSQL not available: {exc}")
 
     # Ensure pgvector extension exists
     with engine.begin() as conn:
@@ -47,8 +92,15 @@ def db_session(db_engine):
     connection.close()
 
 
+# ---------------------------------------------------------------------------
+# Sample model fixtures
+# ---------------------------------------------------------------------------
+
+
 @pytest.fixture()
-def sample_camera() -> Camera:
+def sample_camera():
+    from src.database.models import Camera
+
     return Camera(
         camera_id="cam-001",
         name="Broadway & 42nd",
@@ -60,7 +112,9 @@ def sample_camera() -> Camera:
 
 
 @pytest.fixture()
-def sample_vehicle() -> Vehicle:
+def sample_vehicle():
+    from src.database.models import Vehicle
+
     return Vehicle(
         vehicle_id=uuid.uuid4(),
         plate_number="ABC-1234",
@@ -72,7 +126,9 @@ def sample_vehicle() -> Vehicle:
 
 
 @pytest.fixture()
-def sample_detection(sample_camera, sample_vehicle) -> Detection:
+def sample_detection(sample_camera, sample_vehicle):
+    from src.database.models import Detection
+
     return Detection(
         detection_id=uuid.uuid4(),
         camera_id=sample_camera.camera_id,

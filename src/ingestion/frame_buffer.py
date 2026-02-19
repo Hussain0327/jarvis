@@ -32,14 +32,17 @@ class FrameBuffer:
 
     def put(self, frame: FrameData) -> None:
         """Add a frame, dropping the oldest if the buffer is full."""
-        if self._queue.full():
+        while True:
             try:
-                self._queue.get_nowait()
-                with self._drop_lock:
-                    self._dropped_count += 1
-            except queue.Empty:
-                pass
-        self._queue.put_nowait(frame)
+                self._queue.put_nowait(frame)
+                return
+            except queue.Full:
+                try:
+                    self._queue.get_nowait()
+                    with self._drop_lock:
+                        self._dropped_count += 1
+                except queue.Empty:
+                    pass
 
     def get(self, timeout: float = 1.0) -> FrameData | None:
         """Get the next frame, returning ``None`` on timeout."""

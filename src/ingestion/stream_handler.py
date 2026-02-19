@@ -6,12 +6,28 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from urllib.parse import urlparse, urlunparse
 
 import cv2
 from loguru import logger
 
 from src.base import FrameData
 from src.config import get_settings
+
+
+def _sanitize_url(url: str) -> str:
+    """Strip credentials from a URL for safe logging."""
+    try:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            # Replace netloc user:pass with ***
+            safe_netloc = "***:***@" + parsed.hostname
+            if parsed.port:
+                safe_netloc += f":{parsed.port}"
+            return urlunparse(parsed._replace(netloc=safe_netloc))
+    except Exception:
+        pass
+    return url
 
 # OpenCV capture configuration
 _OPEN_TIMEOUT_MS = 5000
@@ -101,9 +117,9 @@ class StreamHandler:
         )
         if self._cap.isOpened():
             self._cap.set(cv2.CAP_PROP_BUFFERSIZE, _CAP_BUFFER_SIZE)
-            logger.info("Connected to stream {}", self._stream_url)
+            logger.info("Connected to stream {}", _sanitize_url(self._stream_url))
             return True
-        logger.warning("Failed to connect to stream {}", self._stream_url)
+        logger.warning("Failed to connect to stream {}", _sanitize_url(self._stream_url))
         self._disconnect()
         return False
 
@@ -148,8 +164,7 @@ class StreamHandler:
         last_emit_time = 0.0
 
         while not self._stop_event.is_set():
-            ret, frame = self._cap.read()
-            if not ret:
+            if not self._cap.grab():
                 logger.warning("Read failure on camera {}", self._camera_id)
                 if not self._reconnect_with_backoff():
                     break
@@ -157,6 +172,10 @@ class StreamHandler:
 
             now = time.monotonic()
             if now - last_emit_time < min_interval:
+                continue
+
+            ret, frame = self._cap.retrieve()
+            if not ret:
                 continue
 
             last_emit_time = now
@@ -167,6 +186,11 @@ class StreamHandler:
                 timestamp=datetime.now(UTC),
                 frame_number=self._frame_number,
             )
-            frame_callback(frame_data)
+            try:
+                frame_callback(frame_data)
+            except Exception:
+                logger.opt(exception=True).error(
+                    "Frame callback error on camera {}", self._camera_id
+                )
 
         self._disconnect()

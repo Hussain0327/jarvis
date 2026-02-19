@@ -8,7 +8,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import numpy as np
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.base import DetectionResult, PerceptionResult
@@ -32,6 +34,8 @@ def upsert_camera(
     coverage_zone: dict | None = None,
 ) -> Camera:
     """Insert or update a camera record."""
+    if not camera_id or len(camera_id) > 50:
+        raise ValueError(f"camera_id must be 1-50 chars, got {len(camera_id)!r}")
     camera = session.get(Camera, camera_id)
     if camera is None:
         camera = Camera(
@@ -96,27 +100,41 @@ def upsert_vehicle(
     timestamp: datetime | None = None,
     color: str | None = None,
 ) -> Vehicle:
-    """Find vehicle by plate or create new. Updates last_seen and increments sightings on match."""
-    stmt = select(Vehicle).where(Vehicle.plate_number == plate_number)
-    vehicle = session.scalars(stmt).first()
+    """Find vehicle by plate or create new. Updates last_seen and increments sightings on match.
+
+    Uses INSERT ... ON CONFLICT DO UPDATE to avoid race conditions under concurrent writes.
+    """
     now = timestamp or datetime.now(UTC)
-    if vehicle is None:
-        vehicle = Vehicle(
-            plate_number=plate_number,
-            vehicle_class=vehicle_class,
-            color=color,
-            first_seen=now,
-            last_seen=now,
-            total_sightings=1,
+    values: dict = {
+        "plate_number": plate_number,
+        "first_seen": now,
+        "last_seen": now,
+        "total_sightings": 1,
+    }
+    if vehicle_class is not None:
+        values["vehicle_class"] = vehicle_class
+    if color is not None:
+        values["color"] = color
+
+    set_on_conflict: dict = {
+        "last_seen": now,
+        "total_sightings": Vehicle.total_sightings + 1,
+    }
+    if vehicle_class is not None:
+        set_on_conflict["vehicle_class"] = vehicle_class
+    if color is not None:
+        set_on_conflict["color"] = color
+
+    stmt = (
+        pg_insert(Vehicle)
+        .values(**values)
+        .on_conflict_do_update(
+            index_elements=["plate_number"],
+            set_=set_on_conflict,
         )
-        session.add(vehicle)
-    else:
-        vehicle.last_seen = now
-        vehicle.total_sightings += 1
-        if vehicle_class is not None:
-            vehicle.vehicle_class = vehicle_class
-        if color is not None:
-            vehicle.color = color
+        .returning(Vehicle)
+    )
+    vehicle = session.execute(stmt).scalars().first()
     session.flush()
     return vehicle
 
@@ -175,6 +193,7 @@ def bulk_create_detections(
     """Create detection records for all detections in a PerceptionResult.
 
     For detections with plate_text, upserts the vehicle first.
+    Uses a single flush at the end for better performance.
     """
     records = []
     for det in perception_result.detections:
@@ -187,15 +206,24 @@ def bulk_create_detections(
                 timestamp=perception_result.timestamp,
             )
             vehicle_id = vehicle.vehicle_id
-        record = create_detection(
-            session,
+        record = Detection(
             camera_id=perception_result.camera_id,
             timestamp=perception_result.timestamp,
             frame_number=perception_result.frame_number,
-            detection=det,
             vehicle_id=vehicle_id,
         )
+        if det is not None:
+            record.bbox_x = det.bbox.x
+            record.bbox_y = det.bbox.y
+            record.bbox_w = det.bbox.w
+            record.bbox_h = det.bbox.h
+            record.vehicle_class = det.vehicle_class
+            record.vehicle_confidence = det.vehicle_confidence
+            record.plate_text = det.plate_text
+            record.plate_confidence = det.plate_confidence
+        session.add(record)
         records.append(record)
+    session.flush()
     return records
 
 
@@ -229,3 +257,134 @@ def get_detections_by_plate(
         .limit(limit)
     )
     return list(session.scalars(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# Embedding / Re-ID queries (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def find_similar_vehicles(
+    session: Session,
+    embedding: np.ndarray,
+    threshold: float = 0.85,
+    time_after: datetime | None = None,
+    exclude_camera_id: str | None = None,
+    limit: int = 5,
+) -> list[tuple[Vehicle, float]]:
+    """Find vehicles with similar embedding centroids via pgvector cosine similarity.
+
+    Args:
+        embedding: Query embedding vector (768-dim).
+        threshold: Minimum cosine similarity (0-1).
+        time_after: Only consider vehicles seen after this timestamp.
+        exclude_camera_id: Exclude vehicles whose most recent detection
+            was from this camera (for cross-camera matching).
+        limit: Maximum number of results.
+
+    Returns:
+        List of (Vehicle, similarity_score) tuples ordered by similarity descending.
+    """
+    query_vec = embedding.tolist()
+    # cosine_distance: 0 = identical, 2 = opposite
+    # cosine_similarity = 1 - cosine_distance
+    stmt = (
+        select(
+            Vehicle,
+            (1 - Vehicle.embedding_centroid.cosine_distance(query_vec)).label(
+                "similarity"
+            ),
+        )
+        .filter(Vehicle.embedding_centroid.isnot(None))
+        .filter(
+            Vehicle.embedding_centroid.cosine_distance(query_vec) < (1 - threshold)
+        )
+    )
+
+    if time_after is not None:
+        stmt = stmt.filter(Vehicle.last_seen >= time_after)
+
+    # Exclude vehicles whose latest detection is from the given camera via
+    # a correlated subquery — this avoids post-hoc filtering that defeats LIMIT.
+    if exclude_camera_id is not None:
+        latest_camera_subq = (
+            select(Detection.camera_id)
+            .where(Detection.vehicle_id == Vehicle.vehicle_id)
+            .order_by(Detection.timestamp.desc())
+            .limit(1)
+            .correlate(Vehicle)
+            .scalar_subquery()
+        )
+        stmt = stmt.filter(latest_camera_subq != exclude_camera_id)
+
+    stmt = (
+        stmt.order_by(Vehicle.embedding_centroid.cosine_distance(query_vec))
+        .limit(limit)
+    )
+
+    return [(vehicle, float(sim)) for vehicle, sim in session.execute(stmt)]
+
+
+def update_vehicle_centroid(
+    session: Session,
+    vehicle_id: uuid.UUID,
+    new_centroid: np.ndarray,
+) -> None:
+    """Update a vehicle's embedding centroid."""
+    vehicle = session.get(Vehicle, vehicle_id)
+    if vehicle is not None:
+        vehicle.embedding_centroid = new_centroid.tolist()
+        session.flush()
+
+
+def upsert_vehicle_by_embedding(
+    session: Session,
+    vehicle_class: str | None,
+    timestamp: datetime,
+    embedding: np.ndarray,
+) -> Vehicle:
+    """Create a new anonymous vehicle (no plate) with an embedding centroid."""
+    vehicle = Vehicle(
+        vehicle_class=vehicle_class,
+        first_seen=timestamp,
+        last_seen=timestamp,
+        total_sightings=1,
+        embedding_centroid=embedding.tolist(),
+    )
+    session.add(vehicle)
+    session.flush()
+    return vehicle
+
+
+def create_detection_with_track(
+    session: Session,
+    camera_id: str,
+    timestamp: datetime,
+    frame_number: int | None,
+    detection: DetectionResult | None,
+    vehicle_id: uuid.UUID | None,
+    track_id: int | None,
+    embedding: np.ndarray | None = None,
+) -> Detection:
+    """Create a detection record with tracking and embedding information."""
+    det = Detection(
+        camera_id=camera_id,
+        timestamp=timestamp,
+        frame_number=frame_number,
+        vehicle_id=vehicle_id,
+        track_id=track_id,
+    )
+    if detection is not None:
+        det.bbox_x = detection.bbox.x
+        det.bbox_y = detection.bbox.y
+        det.bbox_w = detection.bbox.w
+        det.bbox_h = detection.bbox.h
+        det.vehicle_class = detection.vehicle_class
+        det.vehicle_confidence = detection.vehicle_confidence
+        det.plate_text = detection.plate_text
+        det.plate_confidence = detection.plate_confidence
+    if embedding is not None:
+        det.embedding = embedding.tolist()
+    session.add(det)
+    session.flush()
+    return det

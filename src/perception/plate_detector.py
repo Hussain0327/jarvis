@@ -32,5 +32,23 @@ class PlateDetector(BaseYOLODetector, BaseProcessor[np.ndarray, list[BoundingBox
         return plates
 
     def process_batch(self, inputs: list[np.ndarray]) -> list[list[BoundingBox]]:
-        """Run detection on a batch of crops (sequential for now)."""
-        return [self.process(crop) for crop in inputs]
+        """Run detection on a batch of crops via true batch inference."""
+        if not inputs:
+            return []
+        if self._model is None:
+            raise RuntimeError("PlateDetector.load() must be called first")
+        batch_results = self._model.predict(
+            source=inputs,
+            conf=self._confidence_threshold,
+            device=self._device,
+            verbose=False,
+        )
+        all_plates = []
+        for result in batch_results:
+            boxes = result.boxes
+            plates = []
+            for i in range(len(boxes)):
+                x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                plates.append(BoundingBox(x=x1, y=y1, w=x2 - x1, h=y2 - y1))
+            all_plates.append(plates)
+        return all_plates

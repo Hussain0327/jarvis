@@ -36,6 +36,8 @@ class BaseYOLODetector:
 
         Returns the raw ultralytics Results list.
         """
+        if self._model is None:
+            raise RuntimeError(f"{type(self).__name__}.load() must be called first")
         return self._model.predict(
             source=source,
             conf=self._confidence_threshold,

@@ -110,27 +110,41 @@ class PerceptionPipeline(BaseProcessor[FrameData, PerceptionResult]):
             return ("", 0.0)
 
 
+VEHICLE_CLASS_IDS: dict[str, int] = {
+    "car": 0,
+    "truck": 1,
+    "bus": 2,
+    "motorcycle": 3,
+    "van": 4,
+    "bicycle": 5,
+}
+"""Stable class-name-to-integer mapping for BoxMOT.
+
+Unknown classes get ``len(VEHICLE_CLASS_IDS)`` as a fallback.
+"""
+
+_UNKNOWN_CLASS_ID = len(VEHICLE_CLASS_IDS)
+
+
 def to_boxmot_format(detections: list[DetectionResult]) -> np.ndarray:
     """Convert detections to BoxMOT format: ``(N, 6) [x1, y1, x2, y2, conf, cls]``.
 
-    Class names are mapped to sequential integer IDs.
+    Class names are mapped to stable integer IDs via :data:`VEHICLE_CLASS_IDS`.
     Returns an empty ``(0, 6)`` array if *detections* is empty.
     """
     if not detections:
         return np.empty((0, 6), dtype=np.float32)
 
-    class_map: dict[str, int] = {}
     rows = []
     for det in detections:
-        if det.vehicle_class not in class_map:
-            class_map[det.vehicle_class] = len(class_map)
+        cls_id = VEHICLE_CLASS_IDS.get(det.vehicle_class, _UNKNOWN_CLASS_ID)
         rows.append([
             det.bbox.x,
             det.bbox.y,
             det.bbox.x + det.bbox.w,
             det.bbox.y + det.bbox.h,
             det.vehicle_confidence,
-            class_map[det.vehicle_class],
+            cls_id,
         ])
 
     return np.array(rows, dtype=np.float32)

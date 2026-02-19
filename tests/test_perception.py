@@ -10,17 +10,13 @@ import pytest
 import torch
 from src.base import BoundingBox, DetectionResult, FrameData, PerceptionResult
 from src.perception._utils import crop_region, resolve_device, translate_bbox
-from src.perception.perception_pipeline import PerceptionPipeline, to_boxmot_format
+from src.perception.perception_pipeline import (
+    VEHICLE_CLASS_IDS,
+    PerceptionPipeline,
+    to_boxmot_format,
+)
 
-
-def _make_frame(camera_id: str = "cam-001", frame_number: int = 1) -> FrameData:
-    return FrameData(
-        image=np.zeros((480, 640, 3), dtype=np.uint8),
-        camera_id=camera_id,
-        timestamp=datetime.now(UTC),
-        frame_number=frame_number,
-    )
-
+from tests.conftest import make_frame
 
 # ---------------------------------------------------------------------------
 # resolve_device
@@ -73,7 +69,7 @@ class TestVehicleDetector:
 
         det = VehicleDetector()
         det.load()
-        frame = _make_frame()
+        frame = make_frame()
         results = det.process(frame)
 
         assert len(results) == 1
@@ -103,8 +99,15 @@ class TestVehicleDetector:
 
         det = VehicleDetector()
         det.load()
-        results = det.process(_make_frame())
+        results = det.process(make_frame())
         assert results == []
+
+    def test_process_without_load_raises(self):
+        from src.perception.vehicle_detector import VehicleDetector
+
+        det = VehicleDetector()
+        with pytest.raises(RuntimeError, match="load\\(\\) must be called first"):
+            det.process(make_frame())
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +139,13 @@ class TestPlateDetector:
         assert len(plates) == 1
         assert plates[0].x == pytest.approx(10.0)
         assert plates[0].w == pytest.approx(100.0)
+
+    def test_process_without_load_raises(self):
+        from src.perception.plate_detector import PlateDetector
+
+        det = PlateDetector()
+        with pytest.raises(RuntimeError, match="load\\(\\) must be called first"):
+            det.process(np.zeros((200, 200, 3), dtype=np.uint8))
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +211,13 @@ class TestPlateOCR:
         assert text == ""
         assert conf == 0.0
 
+    def test_process_without_load_raises(self):
+        from src.perception.plate_ocr import PlateOCR
+
+        ocr = PlateOCR()
+        with pytest.raises(RuntimeError, match="load\\(\\) must be called first"):
+            ocr.process(np.zeros((50, 100, 3), dtype=np.uint8))
+
 
 # ---------------------------------------------------------------------------
 # Pipeline helpers (real numpy, no mocks)
@@ -263,6 +280,51 @@ class TestToBoxmotFormat:
     def test_empty_detections(self):
         result = to_boxmot_format([])
         assert result.shape == (0, 6)
+
+    def test_stable_class_ids(self):
+        """Same class always gets the same ID regardless of order."""
+        dets_a = [
+            DetectionResult(
+                bbox=BoundingBox(x=0, y=0, w=1, h=1),
+                vehicle_class="car",
+                vehicle_confidence=0.9,
+            ),
+            DetectionResult(
+                bbox=BoundingBox(x=0, y=0, w=1, h=1),
+                vehicle_class="truck",
+                vehicle_confidence=0.9,
+            ),
+        ]
+        dets_b = [
+            DetectionResult(
+                bbox=BoundingBox(x=0, y=0, w=1, h=1),
+                vehicle_class="truck",
+                vehicle_confidence=0.9,
+            ),
+            DetectionResult(
+                bbox=BoundingBox(x=0, y=0, w=1, h=1),
+                vehicle_class="car",
+                vehicle_confidence=0.9,
+            ),
+        ]
+        result_a = to_boxmot_format(dets_a)
+        result_b = to_boxmot_format(dets_b)
+        # car is always 0, truck is always 1
+        assert result_a[0, 5] == VEHICLE_CLASS_IDS["car"]
+        assert result_a[1, 5] == VEHICLE_CLASS_IDS["truck"]
+        assert result_b[0, 5] == VEHICLE_CLASS_IDS["truck"]
+        assert result_b[1, 5] == VEHICLE_CLASS_IDS["car"]
+
+    def test_unknown_class_gets_fallback_id(self):
+        dets = [
+            DetectionResult(
+                bbox=BoundingBox(x=0, y=0, w=1, h=1),
+                vehicle_class="helicopter",
+                vehicle_confidence=0.5,
+            ),
+        ]
+        result = to_boxmot_format(dets)
+        assert result[0, 5] == len(VEHICLE_CLASS_IDS)
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +434,57 @@ class TestPerceptionPipeline:
         )
         result = pipeline.process(frame)
 
+        assert len(result.detections) == 1
+        assert result.detections[0].plate_text is None
+        mock_ocr.process.assert_not_called()
+
+    def test_process_batch(self):
+        """process_batch should return a list of PerceptionResults."""
+        mock_vehicle_det = MagicMock()
+        mock_plate_det = MagicMock()
+        mock_ocr = MagicMock()
+
+        vehicle_detection = DetectionResult(
+            bbox=BoundingBox(x=100, y=100, w=200, h=150),
+            vehicle_class="car",
+            vehicle_confidence=0.95,
+        )
+        mock_vehicle_det.process.return_value = [vehicle_detection]
+        mock_plate_det.process.return_value = []
+
+        pipeline = PerceptionPipeline(
+            vehicle_detector=mock_vehicle_det,
+            plate_detector=mock_plate_det,
+            plate_ocr=mock_ocr,
+        )
+
+        frames = [make_frame(frame_number=i) for i in range(3)]
+        results = pipeline.process_batch(frames)
+        assert len(results) == 3
+        for r in results:
+            assert isinstance(r, PerceptionResult)
+
+    def test_plate_detection_exception_path(self):
+        """If plate detection raises, detection is kept without plate info."""
+        mock_vehicle_det = MagicMock()
+        mock_plate_det = MagicMock()
+        mock_ocr = MagicMock()
+
+        vehicle_detection = DetectionResult(
+            bbox=BoundingBox(x=100, y=100, w=200, h=150),
+            vehicle_class="car",
+            vehicle_confidence=0.95,
+        )
+        mock_vehicle_det.process.return_value = [vehicle_detection]
+        mock_plate_det.process.side_effect = RuntimeError("Plate detection failed")
+
+        pipeline = PerceptionPipeline(
+            vehicle_detector=mock_vehicle_det,
+            plate_detector=mock_plate_det,
+            plate_ocr=mock_ocr,
+        )
+
+        result = pipeline.process(make_frame())
         assert len(result.detections) == 1
         assert result.detections[0].plate_text is None
         mock_ocr.process.assert_not_called()

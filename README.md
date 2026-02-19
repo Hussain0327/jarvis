@@ -2,10 +2,10 @@
 
 ## Principal-Level Technical Design Document
 
-**Version:** 1.0
+**Version:** 1.1
 **Author:** Hussain
 **Date:** February 2026
-**Status:** Planning Phase
+**Status:** Phase 2 Complete — Tracking System Implemented
 
 ---
 
@@ -14,6 +14,36 @@
 Project Jarvis is a full-stack AI engineering and data science platform that ingests live traffic camera feeds, detects and identifies vehicles, tracks them across multiple cameras, predicts their trajectories, detects behavioral anomalies, and exposes all intelligence through both a visual command dashboard and a natural language analyst interface powered by a fine-tuned open-source LLM with RAG.
 
 The system chains together six distinct technical layers, each representing a different ML/AI engineering competency: real-time video ingestion, deep learning perception (detection + OCR), multi-object tracking with cross-camera identity resolution, classical ML analytics, a full-stack web dashboard, and an LLM-powered intelligence interface with retrieval-augmented generation.
+
+---
+
+## 1.1 Progress
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 1: Ingestion + Perception | **Complete** | StreamHandler, FrameBuffer, CameraManager, YOLOv8 vehicle/plate detection, TrOCR OCR, PerceptionPipeline |
+| Phase 2: Tracking | **Complete** | SingleCameraTracker (BoxMOT), ReIDEmbedder (DINOv2/OSNet), CrossCameraResolver, IdentityGraph |
+| Codebase Audit | **Complete** | 31 issues fixed: thread safety (4), security (3), config (3), reliability (6), performance (7), test infra (3), test coverage (5) |
+| Phase 3: Database Pipeline | Not started | Full schema deployed, query functions exist; pipeline orchestration needed |
+| Phase 4: Analytics Engine | Not started | Route clustering, anomaly detection, trajectory prediction |
+| Phase 5: Dashboard | Not started | FastAPI + Streamlit |
+| Phase 6: LLM Intelligence | Not started | Qwen3 + RAG + function calling |
+| Phase 7: Integration | Not started | Docker deployment + hardening |
+
+**Test suite:** 108 passing, 4 skipped (DB integration), lint clean (`ruff check src/ tests/`)
+
+**Key audit fixes applied:**
+- Thread-safe singletons (double-checked locking) in DB session and camera manager
+- PostgreSQL upserts (`INSERT ON CONFLICT`) replacing race-prone SELECT-then-INSERT
+- RTSP credential sanitization in logs
+- Hardcoded passwords removed from tracked files
+- YAML config sub-settings now actually load
+- `get_settings()` is a true `@lru_cache` singleton
+- `sqlalchemy.engine.URL.create()` for safe URL encoding
+- Stable class IDs for BoxMOT tracker association
+- Batch inference for YOLO/TrOCR (true GPU batching, not sequential loops)
+- `grab()`/`retrieve()` frame skipping optimization
+- HNSW vector index migration for pgvector similarity search
 
 ---
 

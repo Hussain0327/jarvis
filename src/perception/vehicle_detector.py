@@ -36,5 +36,31 @@ class VehicleDetector(BaseYOLODetector, BaseProcessor[FrameData, list[DetectionR
         return detections
 
     def process_batch(self, inputs: list[FrameData]) -> list[list[DetectionResult]]:
-        """Run detection on a batch of frames (sequential for now)."""
-        return [self.process(frame) for frame in inputs]
+        """Run detection on a batch of frames via true batch inference."""
+        if not inputs:
+            return []
+        if self._model is None:
+            raise RuntimeError("VehicleDetector.load() must be called first")
+        images = [frame.image for frame in inputs]
+        batch_results = self._model.predict(
+            source=images,
+            conf=self._confidence_threshold,
+            device=self._device,
+            verbose=False,
+        )
+        all_detections = []
+        for result in batch_results:
+            boxes = result.boxes
+            names = result.names
+            detections = []
+            for i in range(len(boxes)):
+                x1, y1, x2, y2 = boxes.xyxy[i].tolist()
+                detections.append(
+                    DetectionResult(
+                        bbox=BoundingBox(x=x1, y=y1, w=x2 - x1, h=y2 - y1),
+                        vehicle_class=names[int(boxes.cls[i])],
+                        vehicle_confidence=float(boxes.conf[i]),
+                    )
+                )
+            all_detections.append(detections)
+        return all_detections

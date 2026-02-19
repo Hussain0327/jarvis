@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import torch
 from loguru import logger
@@ -36,7 +37,9 @@ class PlateOCR(BaseProcessor[np.ndarray, tuple[str, float]]):
 
         Returns (text, confidence). Returns ("", 0.0) if confidence is below threshold.
         """
-        rgb = input_data[:, :, ::-1]
+        if self._model is None:
+            raise RuntimeError("PlateOCR.load() must be called first")
+        rgb = cv2.cvtColor(input_data, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb)
 
         pixel_values = self._processor(pil_image, return_tensors="pt").pixel_values.to(self._device)
@@ -61,5 +64,36 @@ class PlateOCR(BaseProcessor[np.ndarray, tuple[str, float]]):
         return (text, avg_conf)
 
     def process_batch(self, inputs: list[np.ndarray]) -> list[tuple[str, float]]:
-        """Run OCR on a batch of plate crops (sequential for now)."""
-        return [self.process(crop) for crop in inputs]
+        """Run OCR on a batch of plate crops via batch inference."""
+        if not inputs:
+            return []
+        if self._model is None:
+            raise RuntimeError("PlateOCR.load() must be called first")
+
+        pil_images = [Image.fromarray(crop[:, :, ::-1]) for crop in inputs]
+        pixel_values = self._processor(
+            pil_images, return_tensors="pt", padding=True,
+        ).pixel_values.to(self._device)
+
+        with torch.no_grad():
+            outputs = self._model.generate(
+                pixel_values,
+                return_dict_in_generate=True,
+                output_scores=True,
+                max_new_tokens=20,
+            )
+
+        texts = self._processor.batch_decode(outputs.sequences, skip_special_tokens=True)
+        transition_scores = self._model.compute_transition_scores(
+            outputs.sequences, outputs.scores, normalize_logits=True,
+        )
+
+        results = []
+        for i, text in enumerate(texts):
+            text = text.strip()
+            avg_conf = float(np.exp(transition_scores[i].cpu().numpy()).mean())
+            if avg_conf < self._confidence_threshold:
+                results.append(("", 0.0))
+            else:
+                results.append((text, avg_conf))
+        return results

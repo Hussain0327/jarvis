@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from loguru import logger
 
@@ -26,6 +27,7 @@ def setup_logging(level: str = "INFO", log_file: str | None = "logs/jarvis.log")
 
     # File: JSON for machine parsing
     if log_file:
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
         logger.add(
             log_file,
             level=level,

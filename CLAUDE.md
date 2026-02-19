@@ -28,8 +28,11 @@ pip install -e ".[all]"
 # Lint
 ruff check src/ tests/
 
-# Test (unit only)
-pytest tests/test_config.py
+# Test (all unit tests — 108 tests, no DB required)
+pytest tests/ -v
+
+# Test (with coverage)
+pytest tests/ --cov=src --cov-report=term-missing
 
 # Test (integration — requires PostgreSQL)
 docker compose -f docker/docker-compose.yml up -d
@@ -78,3 +81,15 @@ docker/docker-compose.yml  # PostgreSQL 16 + pgvector
 - **Line length:** 100 chars (ruff)
 - **Target Python:** 3.11+
 - **Imports:** use `from __future__ import annotations` in all modules
+- **Thread safety:** All shared mutable state uses `threading.Lock` (double-checked locking for singletons)
+- **DB upserts:** Use `INSERT ... ON CONFLICT DO UPDATE` via `sqlalchemy.dialects.postgresql.insert`, never SELECT-then-INSERT
+- **Credentials:** Never hardcode passwords; use env vars or `.env` file (see `.env.example`)
+- **Processor guards:** All `BaseProcessor` subclasses must raise `RuntimeError` if `process()` is called before `load()`
+
+## Current Status
+
+- **Phase 1 (Ingestion + Perception):** Complete
+- **Phase 2 (Tracking):** Complete
+- **Audit:** 31-issue codebase audit complete (thread safety, security, config, reliability, performance, tests)
+- **Tests:** 108 passing, 4 skipped (DB integration), lint clean
+- **Next:** Phase 3 (Database Pipeline), Phase 4 (Analytics Engine)

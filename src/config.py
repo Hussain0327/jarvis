@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_PATH = _PROJECT_ROOT / "config" / "config.yaml"
@@ -34,13 +36,20 @@ class DatabaseSettings(BaseSettings):
     port: int = 5432
     name: str = "jarvis"
     user: str = "jarvis"
-    password: str = "jarvis_dev"
+    password: str = ""
     pool_size: int = 20
     echo: bool = False
 
     @property
     def url(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        return URL.create(
+            drivername="postgresql",
+            username=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+            database=self.name,
+        ).render_as_string(hide_password=False)
 
 
 class VehicleDetectorSettings(BaseSettings):
@@ -82,6 +91,20 @@ class TrackingSettings(BaseSettings):
     max_age: int = 30
     min_hits: int = 3
     iou_threshold: float = 0.3
+    reid_weights: str = "osnet_x0_25_msmt17.pt"
+    track_buffer: int = 30
+    match_thresh: float = 0.8
+    new_track_thresh: float = 0.6
+    with_reid: bool = True
+
+
+class ReIDSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="JARVIS_REID__")
+
+    model_name: str = "facebook/dinov2-base"
+    device: str = "auto"
+    similarity_threshold: float = 0.85
+    time_window_seconds: float = 3600.0
 
 
 class IngestionSettings(BaseSettings):
@@ -121,14 +144,25 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     perception: PerceptionSettings = Field(default_factory=PerceptionSettings)
     tracking: TrackingSettings = Field(default_factory=TrackingSettings)
+    reid: ReIDSettings = Field(default_factory=ReIDSettings)
     ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
 
     @classmethod
     def from_yaml(cls) -> Settings:
         """Create settings, applying YAML config as defaults under env vars."""
-        return cls(**_yaml_defaults.get("app", {}))
+        yaml_data = dict(_yaml_defaults)
+        # Merge top-level app settings
+        init: dict[str, Any] = {}
+        if "app" in yaml_data:
+            init.update(yaml_data["app"])
+        # Map each sub-section to corresponding nested settings
+        for key in ("database", "perception", "tracking", "reid", "ingestion"):
+            if key in yaml_data:
+                init[key] = yaml_data[key]
+        return cls(**init)
 
 
+@functools.lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return application settings singleton."""
     return Settings.from_yaml()

@@ -1,15 +1,25 @@
 """Alembic migration environment.
 
 Auto-creates the pgvector extension before running migrations.
+Uses application settings to build the database URL when not set in alembic.ini.
 """
 
 from alembic import context
 from sqlalchemy import create_engine, pool, text
 
+from src.config import get_settings
 from src.database.models import Base
 
 config = context.config
 target_metadata = Base.metadata
+
+
+def _get_url() -> str:
+    """Return the database URL from alembic.ini or application settings."""
+    url = config.get_main_option("sqlalchemy.url")
+    if url:
+        return url
+    return get_settings().database.url
 
 
 def _ensure_pgvector(connection) -> None:
@@ -20,9 +30,8 @@ def _ensure_pgvector(connection) -> None:
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (emit SQL without connecting)."""
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=_get_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -34,7 +43,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations against a live database."""
     connectable = create_engine(
-        config.get_main_option("sqlalchemy.url"),
+        _get_url(),
         poolclass=pool.NullPool,
     )
 

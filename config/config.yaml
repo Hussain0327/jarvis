@@ -9,7 +9,7 @@ database:
   port: 5432
   name: jarvis
   user: jarvis
-  password: jarvis_dev
+  # password: set via JARVIS_DATABASE__PASSWORD env var or .env file
   pool_size: 20
   echo: false
 
